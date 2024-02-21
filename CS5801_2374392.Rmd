@@ -1,0 +1,479 @@
+---
+title: "CS5801 Coursework Template Proforma"
+author: "2374392"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document: default
+  html_notebook: default
+version: 1
+---
+
+# 0. Instructions 
+
+```{r}
+# Load all the required libraries with `library()`.  
+library(ggplot2)
+library(validate)
+library(mice)
+library(vcd)
+library(ggmosaic)
+library(dplyr)
+```
+
+# 1. Organise and clean the data
+
+## 1.1 Subset the data into the specific dataset allocated
+```{r}
+# Only change the value for SID 
+# Assign your student id into the variable SID, for example:
+SID <- 2374392                  # This is an example, replace 2101234 with your actual ID
+SIDoffset <- (SID %% 50) + 1    # Your SID mod 50 + 1
+
+load("car-analysis-data.Rda")
+# Now subset the car data set
+# Pick every 50th observation starting from your offset
+# Put into your data frame named mydf (you can rename it)
+cardf <- cars.analysis[seq(from=SIDoffset,to=nrow(cars.analysis),by=50),]
+```
+
+
+## 1.2 Data quality analysis plan
+1. Check the structure of data.
+2. Check the data type of each variable to ensure they are suitable.
+3. Check whether there is any missing value (NA) for each variables.
+4. Check whether there is implausible value(outlier) for each variable.
+5. Check whether there is incorrect spelling or any unwanted level in all category variables.
+6. Check whether there is any non-standard representation of missing values.(E.g. 99,-1,"Unknown","NaN")
+7. Create a set of validation rules for each variable to ensure all data passed.
+
+## 1.3 Data quality analysis findings
+
+```{r}
+#Using summary () function and str() function to explore the properties of data variable.
+summary(cardf)
+str(cardf)
+colSums(is.na(cardf))
+```
+1) Unsuitable data type of "automatic_transmission", "damaged","first_owner", "navigation_system", "bluetooth", "third_row_seating", "heat_seats", "brand", "fuel", and "drivetrain" variables.
+
+2) NA values in "engine size", "min_mpg", "max_mpg", "damaged", and "first_owner".
+
+3) Implausible negative value in "max_mpg".
+
+4) Implausible 0 value in "mileage" and "min_mpg".
+
+```{r}
+#comprehension checking for each variables using validator() function. 
+car_data_check <- validator(
+                       #No NA or misspelling in all 25 brands
+                       okbrand=is.element(brand,c("Alfa","Audi","BMW","Cadillac","Chevrolet","FIAT","Ford","Honda","Hyundai","Jaguar","Jeep","Kia","Land","Lexus","MINI","Maserati","Mazda","Mercedes-Benz","Mitsubishi","Nissan","Porsche","Suzuki","Toyota","Volkswagen","Volvo")),
+                       #Mileage for old car should be more than 0.
+                       mileageIsPositive=mileage>0,
+                       #Engine size should be more than 0 litres.
+                       engine_sizeIsPositive=engine_size>0,
+                       #No NA and misspelling in automatic_transmission, fuel, and drive train.
+                       okautomatic_transmission=is.element(automatic_transmission,c("1","0")),
+                       okfuel=is.element(fuel,c("Petrol","Diesel","Electric","GPL","Hybrid")),
+                       okdrivetrain=is.element(drivetrain,c("Four-wheel Drive","Front-wheel Drive","Rear-wheel Drive")),
+                       #No negative value in min_mpg and max_mpg.
+                       min_mpgIsPositive=min_mpg>0,
+                       max_mpgIsPositive=max_mpg>0,
+                       
+                       #No NA or misspelling in damage,first_owner,   navigation_system, bluetooth,third_row_seating, ad heated_seat.
+                       okdamaged=is.element(damaged,c("1","0")),
+                       okfirst_owner=!is.na(first_owner) & first_owner %in% c(1, 0),
+                       oknavigation_system=is.element(navigation_system,c("1","0")),
+                       okbluetooth=is.element(bluetooth,c("1","0")),
+                       okthird_row_seating=is.element(third_row_seating,c("1","0")),
+                       okheated_seats=is.element(heated_seats,c("1","0")),
+                       #No negative value in price.
+                       priceIsPositive=price>0
+                    
+                  
+                      )
+
+qual.check<- confront(cardf, car_data_check)
+summary(qual.check)
+#Create a validation plot
+plot(qual.check)
+```
+22 failed items and 135 missing items.
+```{r}
+#Now we check every categorical variables which have failed entries using table().
+paste("fuel")
+table(cardf$fuel,useNA="ifany")
+paste("first_owner")
+table(cardf$first_owner,useNA="ifany")
+paste("damaged")
+table(cardf$damaged,useNA="ifany")
+paste("drivetrain")
+table(cardf$drivetrain,useNA="ifany")
+
+
+```
+1)Unwanted level of "Pertol" and "Unknown" in "fuel" variable.
+2)Unwanted level of "Unknown" in "drivetrain" variable.
+3)NA values in "damaged" and "first_owner" variables.
+
+## 1.4 Data cleaning  
+1.Unsuitable data type: 
+"automatic_transmission", "damaged", "first_owner", "navigation_system", "bluetooth", "third_row_seating", and "heated_seats" are converted to categorical variables because they are binary variable with 1 or 0. 
+"brand", "fuel", "drivetrain" are converted to categorical data because they contains multiple distinct groups.
+
+2.Implausible negative value in "max_mpg" variable:
+ They are converted into NA.
+
+3.Unwanted level of "Pertol" and "Unknown" in "fuel" variable: 
+"Pertol" is corrected to "Petrol". "Unknown" is converted to NA.
+
+4.Unwanted level of "Unknown" in "drivetrain" variable: 
+"Unknown" is converted to NA.
+
+5.0 in "mileage" variable:
+Implausible for a used car, we converted 0 to NA.
+
+6.Implausible 0 in "min_mpg" variable:
+Implausible for fuel efficiency. We converted 0 to NA.
+
+7.NA values in dataframe:
+We don't deleting NA values because we will lose many data. We will apply MICE imputation because MICE is suitable when values are missing at random (CAR) (Soni,2023). In this data set, values are missing at random, only the missing value of "min_mpg" and "max_mpg" depends on each other. MICE can deal with mixed data type  while capturing relationship between variables(Soni,2023). It also reflecting the uncertainty of missing data so we can make more accurate imputation.
+
+```{r}
+#Convert to categorical variable.
+cardf[, c("brand","automatic_transmission", "damaged", "first_owner", "navigation_system", "bluetooth", "third_row_seating", "heated_seats","fuel","drivetrain")] <- lapply(cardf[, c("brand","automatic_transmission", "damaged", "first_owner", "navigation_system", "bluetooth", "third_row_seating", "heated_seats","fuel","drivetrain")], as.factor)
+```
+
+
+```{r}
+#Correct the misspelling of "Pertol" and "Unknown" in "fuel" variable.
+cardf$fuel[cardf$fuel=="Pertol"] <- "Petrol"
+cardf$fuel[cardf$fuel=="Unknown"] <- NA
+
+#Correct the misspelling of "Unknown" in "drivetrain" variable.
+cardf$drivetrain[cardf$drivetrain=="Unknown"] <- NA
+
+#Convert the negative value or 0 in "max_mpg" variable to NA.
+cardf$max_mpg[cardf$max_mpg<1] <- NA
+
+#Convert the 0 mileage in "mileage" variable to NA.
+cardf$mileage[cardf$mileage==0] <- NA
+
+#convert 0 miles per gallon in "min_mpg" variable to NA.
+cardf$min_mpg[cardf$min_mpg==0] <- NA
+```
+
+```{r}
+#Apply mice imputation to missing value in numeric variables and categorical variables (Science,2021).
+impute_methods <- list(brand = "", year = "", mileage = "pmm", engine_size = "pmm",
+                  automatic_transmission = "", fuel = "polyreg", drivetrain = "polyreg", 
+                  min_mpg = "pmm", max_mpg = "pmm", damaged = "logreg", 
+                  first_owner = "logreg", navigation_system = "", 
+                  bluetooth = "", third_row_seating = "", 
+                  heated_seats = "", price = "")
+
+
+cardf <- mice(cardf, m=5, maxit=10, method=impute_methods, seed=123)
+cardf <- complete(cardf,1)
+```
+
+```{r}
+#Check the summary of dataframe again.
+summary(cardf)
+str(cardf)
+```
+
+```{r}
+#Check the validation of dataframe again.
+qual.check<- confront(cardf, car_data_check)
+summary(qual.check)
+plot(qual.check)
+
+
+```
+Finally all item passed the validation.
+
+
+# 2. Exploratory Data Analysis (EDA)
+
+## 2.1 EDA plan
+During uni-variate visualisation, we will explore distribution of all variables. During multi-variate visualisation, we will explore the relationship of two target variables ("price" and "first_owner") with other explanatory variables respectively.
+
+Uni-variate visualisation:
+1.Visualize the distribution of numeric variables using histogram.
+Numeric variables: "year","mileage","engine_size","min_mpg","max_mpg","price".
+2.Visualize the distribution of categorical variables using bar plot.
+Categorical variables:"brand","fuel","drivetrain","automatic_transmission","damaged","first_owner","navigation_system","bluetooth","third_row_seating","heated_seats".
+
+Multi-variate visualisation (target variable:price/first_owner)
+1.Visualize the relationship between "price" and numeric explanatory variables using scatter plot.
+Numeric explanatory variable: "year","mileage","engine_size","min_mpg","max_mpg".
+
+2.Visualize the relationship between "price" and categorical explanatory variables using box plot.
+Categorical explanatory variable: "brand","fuel","drivetrain","automatic_transmission","damaged","first_owner","navigation_system","bluetooth","third_row_seating","heated_seats".
+
+3.Visualize the relationship between "first_owner" and numeric explanatory variables using box plot.
+Numeric explanatory variable: "year","mileage","engine_size","min_mpg","max_mpg","price".
+
+4.Visualize the relationship between "first_owner" and categorical explanatory variables using mosaic plot.
+Categorical explanatory variable:"brand","fuel","drivetrain","automatic_transmission","damaged","navigation_system","bluetooth","third_row_seating","heated_seats".
+
+5.Explore the degree of correlation between all numeric variables.
+
+## 2.2 EDA execution   
+Univariate visualisation
+```{r}
+#Visualize the distribution of numeric variables using histogram.
+#Numeric variables: "year","mileage","engine_size","min_mpg","max_mpg","price".
+ggplot(cardf,aes(x=year))+geom_histogram()+theme_classic()+ggtitle("Histogram of manufacturing year")+xlab("car year")
+ggplot(cardf,aes(x=mileage))+geom_histogram()+theme_classic()+ggtitle("Histogram of car mileage")+xlab("car mileage")
+ggplot(cardf,aes(x=engine_size))+geom_histogram()+theme_classic()+ggtitle("Histogram of car engine size")+xlab("car engine size")
+ggplot(cardf,aes(x=min_mpg))+geom_histogram()+theme_classic()+ggtitle("Histogram of minimum mpg (miles per gallon)")+xlab("minimum mpg (miles per gallon")
+ggplot(cardf,aes(x=max_mpg))+geom_histogram()+theme_classic()+ggtitle("Histogram of maximum mpg (miles per gallon)")+xlab("maximum mpg (miles per gallon)")
+ggplot(cardf,aes(x=price))+geom_histogram()+theme_classic()+ggtitle("Histogram of car price")+xlab("car price")
+
+```
+Only "price" is normally distributed, other numeric variables are either skewed to left or right. Some reasonable outliers observed. 
+```{r}
+#Visualize the distribution of categorical variables using bar plot.
+#Categorical variables:"brand","fuel","drivetrain","automatic_transmission","damaged","first_owner","navigation_system","bluetooth","third_row_seating","heated_seats".
+ggplot(cardf,aes(x=brand))+geom_bar()+ggtitle("Bar plot of car brand")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
+
+ggplot(cardf,aes(x=fuel))+geom_bar()+ggtitle("Bar plot of fuel type")+theme_classic()
+
+ggplot(cardf,aes(x=drivetrain))+geom_bar()+ggtitle("Bar plot of drivetrain")+theme_classic()
+
+ggplot(cardf,aes(x=automatic_transmission))+geom_bar()+ggtitle("Bar plot of automatic transmission")+theme_classic()
+
+ggplot(cardf,aes(x=damaged))+geom_bar()+ggtitle("Bar plot of damaged")+theme_classic()
+
+ggplot(cardf,aes(x=first_owner))+geom_bar()+ggtitle("Bar plot first owned car")+theme_classic()
+
+ggplot(cardf,aes(x=navigation_system))+geom_bar()+ggtitle("Bar plot of navigation system")+theme_classic()
+
+ggplot(cardf,aes(x=bluetooth))+geom_bar()+ggtitle("Bar plot of bluetooth")+theme_classic()
+
+ggplot(cardf,aes(x=third_row_seating))+geom_bar()+ggtitle("Bar plot of third row seating")+theme_classic()
+
+ggplot(cardf,aes(x=heated_seats))+geom_bar()+ggtitle("Bar plot of heated seats")+theme_classic()
+
+  
+  
+```
+Balance data in "first_owned","navigation system", and "heated seat" only. 
+Bi-variate visualisation
+```{r}
+#Visualize the relationship between "price" and numeric explanatory variables using scatter plot.
+#Numeric explanatory variable: "year","mileage","engine_size","min_mpg","max_mpg".
+ggplot(cardf,aes(x=year,y=price))+geom_point()+theme_classic()+ggtitle("Scatter plot of car price vs manufacturing year")+xlab("manufacturing year")+ylab("car price")
+ggplot(cardf,aes(x=mileage,y=price))+geom_point()+theme_classic()+ggtitle("Scatter plot of car price vs mileage")+xlab("mileage(km)")+ylab("car price")
+ggplot(cardf,aes(x=engine_size,y=price))+geom_point()+theme_classic()+ggtitle("Scatter plot of car price vs engine size")+xlab("engine size")+ylab("car price")
+ggplot(cardf,aes(x=min_mpg,y=price))+geom_point()+theme_classic()+ggtitle("Scatter plot of car price vs minimum mpg")+xlab("min mpg")+ylab("car price")
+ggplot(cardf,aes(x=max_mpg,y=price))+geom_point()+theme_classic()+ggtitle("Scatter plot of car price vs maximum mpg")+xlab("max mpg")+ylab("car price")
+
+```
+Car price shows positive relationship with year, negative relationship with mileage, and unclear relationship with engine size, minimum and maximum mpg.
+```{r}
+#Visualize the relationship between "price" and categorical explanatory variables using box plot.
+#Categorical explanatory variables:"brand","fuel","drivetrain","automatic_transmission","damaged","first_owner","navigation_system","bluetooth","third_row_seating","heated_seats".
+ggplot(cardf,aes(x=brand,y=price))+geom_boxplot()+theme_classic()+ggtitle("Box plot of car price by brand")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+xlab("car brand")+ylab("car price")
+ggplot(cardf,aes(x=fuel,y=price))+geom_boxplot()+theme_classic()+ggtitle("Box plot of car price by fuel type")+xlab("fuel type")+ylab("car price")
+ggplot(cardf,aes(x=drivetrain,y=price))+geom_boxplot()+theme_classic()+ggtitle("Box plot of car price by drivetrain")+xlab("drivetrain")+ylab("car price")
+ggplot(cardf,aes(x=automatic_transmission,y=price))+geom_boxplot()+theme_classic()+ggtitle("Box plot of car price by automatic transmission")+xlab("automatic transmission")+ylab("car price")
+ggplot(cardf,aes(x=damaged,y=price))+geom_boxplot()+theme_classic()+ggtitle("Box plot of car price by damaged")+xlab("damaged")+ylab("car price")
+ggplot(cardf,aes(x=first_owner,y=price))+geom_boxplot()+theme_classic()+ggtitle("Box plot of car price by first owned car")+xlab("first owned car")+ylab("car price")
+ggplot(cardf,aes(x=navigation_system,y=price))+geom_boxplot()+theme_classic()+ggtitle("Box plot of car price by navigation system")+xlab("navigation system")+ylab("car price")
+ggplot(cardf,aes(x=bluetooth,y=price))+geom_boxplot()+theme_classic()+ggtitle("Box plot of car price by bluetooth")+xlab("bluetooth")+ylab("car price")
+ggplot(cardf,aes(x=third_row_seating,y=price))+geom_boxplot()+theme_classic()+ggtitle("Box plot of car price by third row seating")+xlab("third row seating")+ylab("car price")
+ggplot(cardf,aes(x=heated_seats,y=price))+geom_boxplot()+theme_classic()+ggtitle("Box plot of car price by heated seats")+xlab("heated seats")+ylab("car price")
+
+```
+Different median car price in all categorical explanatory variables.
+```{r}
+#Visualize the relationship between "first_owner" and numeric explanatory variables using box plot.
+#Numeric explanatory variable: "year","mileage","engine_size","min_mpg","max_mpg","price".
+ggplot(cardf,aes(x=first_owner,y=year))+geom_boxplot()+theme_classic()+ggtitle("Box plot of manufacturing year vs first owned status")+xlab("first_owner")+ylab("manufacturing year")
+ggplot(cardf,aes(x=first_owner,y=mileage))+geom_boxplot()+theme_classic()+ggtitle("Box plot of mileage vs first owned status")+xlab("first_owner")+ylab("mileage(km)")
+ggplot(cardf,aes(x=first_owner,y=engine_size))+geom_boxplot()+theme_classic()+ggtitle("Box plot of engine size vs first owned status")+xlab("first_owner")+ylab("engine size")
+ggplot(cardf,aes(x=first_owner,y=min_mpg))+geom_boxplot()+theme_classic()+ggtitle("Box plot of minimum mpg vs first owned status")+xlab("first_owner")+ylab("minimum mpg")
+ggplot(cardf,aes(x=first_owner,y=max_mpg))+geom_boxplot()+theme_classic()+ggtitle("Box plot of maximum mpg vs first owned status")+xlab("first_owner")+ylab("maximum mpg")
+ggplot(cardf,aes(x=first_owner,y=price))+geom_boxplot()+theme_classic()+ggtitle("Box plot of car price vs first owned status")+xlab("first_owner")+ylab("car price")
+
+```
+Different median value in all numeric explanatory variable between first owned and non-first owned car.
+
+```{r}
+#Visualize the relationship between "first_owner" and categorical explanatory variables using ggmosaic.
+#Categorical explanatory variables:"brand","fuel","drivetrain","automatic_transmission","damaged","navigation_system","bluetooth","third_row_seating","heated_seats".
+ggplot(data = cardf) +geom_mosaic(aes(weight = 1, x = product(first_owner), fill = brand)) +theme_minimal() +labs(title = "Mosaic Plot of first owned status by brand", x = "first_owner", y = "brand")
+ggplot(data = cardf) +geom_mosaic(aes(weight = 1, x = product(first_owner), fill = fuel)) +theme_minimal() +labs(title = "Mosaic Plot of first owned status by fuel", x = "first_owner", y = "fuel")
+ggplot(data = cardf) +geom_mosaic(aes(weight = 1, x = product(first_owner), fill = drivetrain)) +theme_minimal() +labs(title = "Mosaic Plot of first owned status by drivetrain", x = "first_owner", y = "drivetrain")
+ggplot(data = cardf) +geom_mosaic(aes(weight = 1, x = product(first_owner), fill = automatic_transmission)) +theme_minimal() +labs(title = "Mosaic Plot of first owned status by automatic transmission", x = "first_owner", y = "automatic transmission")
+ggplot(data = cardf) +geom_mosaic(aes(weight = 1, x = product(first_owner), fill = damaged)) +theme_minimal() +labs(title = "Mosaic Plot of first owned status by damaged", x = "first_owner", y = "damaged")
+ggplot(data = cardf) +geom_mosaic(aes(weight = 1, x = product(first_owner), fill = navigation_system)) +theme_minimal() +labs(title = "Mosaic Plot of first owned status by navigation system", x = "first_owner", y = "navigation system")
+ggplot(data = cardf) +geom_mosaic(aes(weight = 1, x = product(first_owner), fill = bluetooth)) +theme_minimal() +labs(title = "Mosaic Plot of first owned status by bluetooth", x = "first_owner", y = "bluetooth")
+ggplot(data = cardf) +geom_mosaic(aes(weight = 1, x = product(first_owner), fill = third_row_seating)) +theme_minimal() +labs(title = "Mosaic Plot of first owned status by third row seating", x = "first_owner", y = "third row seating")
+ggplot(data = cardf) +geom_mosaic(aes(weight = 1, x = product(first_owner), fill = heated_seats)) +theme_minimal() +labs(title = "Mosaic Plot of first owned status by heated seats", x = "first_owner", y = "heated seats")
+
+```
+Different proportion of first owned cars and non-first owned cars in all categorical explanatory variables. 
+
+```{r}
+#Inlude only continuous variable in data set to assess their correlation.
+car.cont <- cardf[, sapply(names(cardf), function(x) x %in% c("year", "mileage", "engine_size", "min_mpg", "max_mpg", "price"))]
+#Visualize correlation between variables using pairs plot.
+pairs(car.cont)
+#Assess the degree of correlation using correlation table.
+cor(car.cont)
+```
+High correlation between min_mpg and max_mpg (0.93).
+```{r}
+#Create a new variable "mpg" by averaging "min_mpg" and "max_mpg".
+cardf$mpg <- (cardf$min_mpg + cardf$max_mpg)/2
+```
+
+## 2.3 EDA summary of results
+Uni-variate exploration
+The distribution of numeric variables such as "year", "min_mpg", "max_mpg", "engine_size" and "mileage" are either left or right skewed, only the "price" is normally distributed.Some possible outliers observed across numeric variables.
+
+For categorical variables, data set is fairly balanced in different brands, except for 'Suzuki" which have very low observation. The data set shows biased towards petrol cars, cars with four-wheel drive, cars with automatic transmission, cars without damage, cars with bluetooth, cars without third row seating. Their observations are much higher than others. The data set shows balanced in first_owner, navigation system, and heated seats. 
+
+Bi-variate exploration around car price
+The car price shows a clear positive relationship with year and a clear negative correlation with mileage. It doesn't have clear relationship with engine size, minimum and maximum mpg.
+
+"Audi" has the highest median car price while "Suzuki" has the lowest median car price.The car price is higher if it is newer and first owned, has hybrid fuel type, 4WD drive train, automatic transmission, navigation system, bluetooth, third row seating, and heated seats. Car price is lower if it is older and damaged, has GPL fuel type, FWD drive train, and is not first owned.
+
+Bi-variate exploration around first owned car
+First owned car has higher median manufacturing year,minimum mpg,maximum mpg and car price while lower median mileage and engine size than non-first owned car.
+
+Proportion of first owned car is greater for brand like Alfa, Volvo, Volkswagen, Nissan, and Kia . More first owned cars are not damaged and come equipped with features like a navigation system, Bluetooth, heated seats, a 4WD drive train, an automatic transmission, third-row seating, and hybrid fuel type.
+
+High correlation between min_mpg and max_mpg, which is 0.93.
+
+
+## 2.4 Additional insights and issues
+1)All numeric variables are not symmetrically distributed.They are either right-skewed or left-skewed. This might affect the modelling process and cause heteroscedasticity.
+
+2) The data set is imbalanced in terms of brand, fuel type, drivetrain, transmission, damage, bluetooth, and third row seating. Some categories have significant low observation such as "Suzuki" brand, fuel type other than "Petrol", "Rear wheel drive" drivetrain, "no" automatic transmission, "damaged" car, "no" bluetooth, "yes" third row seating. This might causing bias in modelling.
+
+3) High correlation between min_mpg and max_mpg, which is 0.93 and it might cause multi-collinearity in the modelling process.
+
+4)Data might not be 100% accurate because missing values are imputed.
+
+# 3. Modelling
+
+## 3.1 Explain your analysis plan
+Analysis plan:
+1.Check the data type of all variables.
+2.Refer to histograms generated on EDA, observe whether distribution of all variables are symmetrically distributed.
+3.Refer to box plots and scatter plots generated on EDA, observe relationship between "price" and all other variables.
+4.Refer to correlation matrix, observe whether there is highly correlated variables.
+
+Analysis justification:
+1.After data type checking, our variables are mix of numeric and categorical data.
+2.Since our dependent variable is a numeric data, and explanatory variables are mix of numeric and categorical data, we use multiple regression.
+2.There is potential relationship between "price" and all explanatory variables, so there is no reason that we don't use all variables in modelling.
+3.High correlation between min_mpg and max_mpg are observed. Hence we would use average mpg to replace "min_mpg" and "max_mpg".
+
+Model building process:
+1.Start modelling from maximal model.
+2.Reduce maximal model to minimal adequate model using step() function.
+3.Use plot() function to assess the quality of model. If model didn't satisfied,  transform the dependent variable and repeat all the process from step 2.
+4.Check and compare the R^2 value between minimal adequate model and maximal model. 
+5.Decide which is the most suitable model by considering their complexity and R^2 value.
+
+## 3.2 Build a model for car price
+```{r}
+cardf.lm<-lm(price~brand+year+mileage+engine_size+automatic_transmission+fuel+drivetrain+mpg+damaged+first_owner+navigation_system+bluetooth+third_row_seating+heated_seats,data=cardf)
+summary(cardf.lm)
+```
+The maximal model have a fairly good multiple R square of 0.82 but it is complex. We try to simplify it.
+```{r}
+#Use step() function to reduce maximal model to minimal adequate model.
+mam.cardf.lm<-step(cardf.lm)
+summary(mam.cardf.lm)
+```
+## 3.3 Critique model using relevant diagnostics
+Variables "year", "mileage", "engine_size", "drivetrainFront-wheel Drive", "navigation_system1" are statistically significant. Various car brands (Audi, Land, Lexus, Mitsubishi, Nissan, Porsche) are significant too.
+ 
+Variables with positive coefficient have positive relationship with "price" , while negative coefficient indicates negative relationship.
+
+This model achieved a good multiple R square of 0.82 and the p-value of F-statistic is significant. The model is still complex. We need to check the diagnostic plots to see whether the model is satisfied.
+```{r}
+summary(mam.cardf.lm)
+#Display the diagnostic plots.
+plot(mam.cardf.lm)
+```
+The residual plot shows that there is potential heteroscedasticity in the model. Variance is not constant along the fitted value, it tends to become wider.QQ plot is normal. Although it achieved a good multiple R square, the model is not satisfied due to heteroscedasticity. 
+
+## 3.4 Suggest and implement improvements to your model
+We need to apply log transformation to the target variable to linear the relationship between target variable and explanatory variable, so heteroscedasticity can be reduced. The modelling started by maximal model with transformed target variable and reduced to minimal adequate model using step() function.
+
+```{r}
+transformed.cardf.lm<-lm(log(price)~brand+year+mileage+engine_size+automatic_transmission+fuel+drivetrain+mpg+damaged+first_owner+navigation_system+bluetooth+third_row_seating+heated_seats,data=cardf)
+summary(transformed.cardf.lm)
+```
+```{r}
+transformed.mam.cardf.lm<-step(transformed.cardf.lm)
+summary(transformed.mam.cardf.lm)
+plot(transformed.cardf.lm)
+```
+The residual plot shows that the variance is constant along the fitted value and 2 outliers observed. QQ plot shows that the residuals are normally distributed. Now the model is satisfied. The multiple R^2 value is increased from 0.82 to 0.87 after transformation. After model simplification, the multiple R^2 value doesn't decrease significantly and most coefficients are significant. This transformed minimum adequate model is good enough to predict the price of used car thus it is proposed.
+
+For this model, a unit changes of explanatory variables will result in change in log of price.  For example, one unit increase of year increases the log of price by about 0.0475. Some variables are significant such as year, mileage, engine_size, several brand categories, fuelElectric, Front wheel drivetrain, and features like damaged, navigation_system, bluetooth, and third_row_seating. This model offer a good multiple R^2 value of 0.87 and significant p-value of F-statistic.
+
+
+# 4. Modelling another dependent variable
+
+## 4.1 Model the likelihood of a car being sold by the first owner (using the first_owner variable provided).
+Analysis plan:
+1.Check the data type of "first_owner" variable, as it would be our target variable.
+2.Check generated box plots and mosaic plots to observe relationship between "first_owner" and all explanatory variables.
+3.Check if there is highly correlated variables through correlation matrices.
+
+Analysis justification:
+1.Since the dependent variable "first_owner" is a binary data, we use logistic  regression.
+2.We don't need to check the distribution, as normal distribution is not an assumption of logistic regression.
+3.There is potential relationship between "first_owner" and all explanatory variables, so there is no reason that we don't use all variables in modelling.
+4.High correlation between min_mpg and max_mpg are observed. Hence we would use average mpg to replace "min_mpg" and "max_mpg".
+
+Model building plan:
+1.Start the logistic regression from maximal model by including all variables into modelling, except "min_mpg" and "max_mpg". They are replaced by average "mpg".
+2.Reduce maximal model to minimal adequate model using step() function.
+3.Check and compare the R^2 value between minimal adequate model and maximal model. 
+4.Decide which is the most suitable model by considering their complexity and R^2 value.
+
+```{r}
+first_owner.glm<-glm(first_owner~price+brand+year+mileage+engine_size+automatic_transmission+fuel+drivetrain+mpg+damaged+navigation_system+bluetooth+third_row_seating+heated_seats,data=cardf,family="binomial")
+summary(first_owner.glm)
+```
+The AIC of maximal model is 441.96. The model is too complex and only has few significant coefficients. So we try to simplify the model.
+
+```{r}
+mam.first_owner.glm<-step(first_owner.glm)
+```
+
+```{r}
+summary(mam.first_owner.glm)
+```
+
+```{r}
+#Calculate the odds ratio of each coefficient.
+exp(coef(mam.first_owner.glm))
+```
+AIC drops from 441.96 to 417.32 after simplification, indicating the minimal adequate model achieved a better fit. Most of coefficients in this model are significant. As this model is more simpler and has lower AIC value, the minimal adequate model is proposed. 
+
+We can summarize that a unit increase in "year", "fuel"=Petrol/GPL/Hybrid, "third_row_seating"=1, "heated_seats"=1 increase the likelihood of a car being sold by the first owner.A unit increase in "engine_size" and "mileage", "fuel"=Electric, "bluetooth"=1 decrease the likelihood.
+
+Variables such as year, mileage, engine_size, fuelGPL, third_row_seating, and heated_seats show statistical significance. Others are not significant.
+
+In this case, we don't consider interaction because it will make the model more complex
+
+Weakness: Some variables in the data set is imbalance, which might result in bias in the model. Model is still complex.
+Recommendations: We can explore method to further simplify the model. If possible, we can consider interaction between variables to improve the model.
+
+
+# References  
+1) Science, R. statistics for P. (2021) Impute missing values with mice package in R, R Functions and Packages for Political Science Analysis. Available at: https://rforpoliticalscience.com/2020/07/28/impute-missing-values-with-mice-package-in-r/ (Accessed: 29 December 2024). 
+
+2) Soni, B. (2023) Topic:9 mice or multivariate imputation with chain-equation, Medium. Available at: https://medium.com/@brijesh_soni/topic-9-mice-or-multivariate-imputation-with-chain-equation-f8fd435ca91 (Accessed: 29 December 2024).     
